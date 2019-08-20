@@ -17,7 +17,11 @@ import (
 	"time"
 )
 
+
+
+// 
 type Config struct {
+	// Server 为 interface{} 类型，它可能是字符串或者字符串数组。
 	Server       interface{} `json:"server"`
 	ServerPort   int         `json:"server_port"`
 	LocalPort    int         `json:"local_port"`
@@ -31,23 +35,32 @@ type Config struct {
 
 	// following options are only used by client
 
-	// The order of servers in the client config is significant, so use array
-	// instead of map to preserve the order.
+	// The order of servers in the client config is significant, 
+	// so use array instead of map to preserve the order.
 	ServerPassword [][]string `json:"server_password"`
 }
 
 var readTimeout time.Duration
 
+
+
+
+// 
 func (config *Config) GetServerArray() []string {
+	
 	// Specifying multiple servers in the "server" options is deprecated.
 	// But for backward compatibility, keep this.
 	if config.Server == nil {
 		return nil
 	}
+
+	// 检查 config.Server 是否是 string 类型
 	single, ok := config.Server.(string)
 	if ok {
 		return []string{single}
 	}
+
+	// 检查 config.Server 是否是 interface{} 数组类型
 	arr, ok := config.Server.([]interface{})
 	if ok {
 		/*
@@ -58,6 +71,8 @@ func (config *Config) GetServerArray() []string {
 		*/
 		serverArr := make([]string, len(arr), len(arr))
 		for i, s := range arr {
+
+			// 检查数组元素是否是 string 类型
 			serverArr[i], ok = s.(string)
 			if !ok {
 				goto typeError
@@ -99,31 +114,39 @@ func UpdateConfig(old, new *Config) {
 	// Using reflection here is not necessary, but it's a good exercise.
 	// For more information on reflections in Go, read "The Laws of Reflection"
 	// http://golang.org/doc/articles/laws_of_reflection.html
+	
 	newVal := reflect.ValueOf(new).Elem()
 	oldVal := reflect.ValueOf(old).Elem()
 
 	// typeOfT := newVal.Type()
 	for i := 0; i < newVal.NumField(); i++ {
+
 		newField := newVal.Field(i)
 		oldField := oldVal.Field(i)
+
 		// log.Printf("%d: %s %s = %v\n", i,
 		// typeOfT.Field(i).Name, newField.Type(), newField.Interface())
 		switch newField.Kind() {
+
 		case reflect.Interface:
 			if fmt.Sprintf("%v", newField.Interface()) != "" {
 				oldField.Set(newField)
 			}
+
 		case reflect.String:
 			s := newField.String()
 			if s != "" {
 				oldField.SetString(s)
 			}
+
 		case reflect.Int:
 			i := newField.Int()
 			if i != 0 {
 				oldField.SetInt(i)
 			}
 		}
+
+
 	}
 
 	old.Timeout = new.Timeout

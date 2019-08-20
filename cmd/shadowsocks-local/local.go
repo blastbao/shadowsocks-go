@@ -159,12 +159,16 @@ type ServerCipher struct {
 	cipher *ss.Cipher
 }
 
+// 全局变量，存储了配置文件中的所有服务器信息
 var servers struct {
 	srvCipher []*ServerCipher
 	failCnt   []int // failed connection count
 }
 
 func parseServerConfig(config *ss.Config) {
+
+
+	// 检查字符串 s 中是否包含 port
 	hasPort := func(s string) bool {
 		_, port, err := net.SplitHostPort(s)
 		if err != nil {
@@ -173,47 +177,65 @@ func parseServerConfig(config *ss.Config) {
 		return port != ""
 	}
 
+	// 如果没有为每个单独的 Server 配置独立 Password，那么每个 Server 都是用统一的 config.Password。
 	if len(config.ServerPassword) == 0 {
+
 		// only one encryption table
 		cipher, err := ss.NewCipher(config.Method, config.Password)
 		if err != nil {
 			log.Fatal("Failed generating ciphers:", err)
 		}
+
+		// 获取 Server Port
 		srvPort := strconv.Itoa(config.ServerPort)
+		// 获取 Server Addresses
 		srvArr := config.GetServerArray()
+		// 为每个 Server 创建一个加解密器对象 ServerCipher
 		n := len(srvArr)
 		servers.srvCipher = make([]*ServerCipher, n)
-
+		// 遍历 Server Addresses
 		for i, s := range srvArr {
+			// 如果 addr 中包含 port，则直接使用 addr 构建 ServerCipher 对象
 			if hasPort(s) {
 				log.Println("ignore server_port option for server", s)
 				servers.srvCipher[i] = &ServerCipher{s, cipher}
+			// 如果 addr 中不含 port，则连接 addr 和 srvPort 生成新的 addr，再构建 ServerCipher 对象
 			} else {
 				servers.srvCipher[i] = &ServerCipher{net.JoinHostPort(s, srvPort), cipher}
 			}
 		}
+
 	} else {
+
 		// multiple servers
 		n := len(config.ServerPassword)
-		servers.srvCipher = make([]*ServerCipher, n)
-
-		cipherCache := make(map[string]*ss.Cipher)
+		servers.srvCipher = make([]*ServerCipher, n) // 存储每个 server 对应的加解密对象 ServerCipher
+		cipherCache := make(map[string]*ss.Cipher)   // 缓存 Cipher 对象
 		i := 0
+
+		// 遍历每个 server 的独立配置进行解析
 		for _, serverInfo := range config.ServerPassword {
+
+			// 至少要包含 server addr, password, 可选包含 enc method
 			if len(serverInfo) < 2 || len(serverInfo) > 3 {
 				log.Fatalf("server %v syntax error\n", serverInfo)
 			}
+
+			// 配置项: server addr, password, enc method
 			server := serverInfo[0]
 			passwd := serverInfo[1]
 			encmethod := ""
 			if len(serverInfo) == 3 {
 				encmethod = serverInfo[2]
 			}
+
+			// server addr 必须包含 port
 			if !hasPort(server) {
 				log.Fatalf("no port for server %s\n", server)
 			}
-			// Using "|" as delimiter is safe here, since no encryption
-			// method contains it in the name.
+
+			// 每个 Pair<encmethod, passwd> 唯一对应一个 Cipher 对象，这里做个缓存，来支持复用。
+			// Using "|" as delimiter is safe here, since no encryption method contains it in the name.
 			cacheKey := encmethod + "|" + passwd
 			cipher, ok := cipherCache[cacheKey]
 			if !ok {
@@ -224,10 +246,13 @@ func parseServerConfig(config *ss.Config) {
 				}
 				cipherCache[cacheKey] = cipher
 			}
+
+			// 为第 i 个 server 设置对应 ServerCipher
 			servers.srvCipher[i] = &ServerCipher{server, cipher}
 			i++
 		}
 	}
+
 	servers.failCnt = make([]int, len(servers.srvCipher))
 	for _, se := range servers.srvCipher {
 		log.Println("available remote server", se.server)
@@ -236,7 +261,12 @@ func parseServerConfig(config *ss.Config) {
 }
 
 func connectToServer(serverId int, rawaddr []byte, addr string) (remote *ss.Conn, err error) {
+
+
+	// 获取第 serverId 个服务器的信息 se
 	se := servers.srvCipher[serverId]
+
+	// 创建 ss 网络连接
 	remote, err = ss.DialWithRawAddr(rawaddr, se.server, se.cipher.Copy())
 	if err != nil {
 		log.Println("error connecting to shadowsocks server:", err)
@@ -246,6 +276,8 @@ func connectToServer(serverId int, rawaddr []byte, addr string) (remote *ss.Conn
 		}
 		return nil, err
 	}
+
+	// 连接成功
 	debug.Printf("connected to %s via %s\n", addr, se.server)
 	servers.failCnt[serverId] = 0
 	return
@@ -253,8 +285,7 @@ func connectToServer(serverId int, rawaddr []byte, addr string) (remote *ss.Conn
 
 // Connection to the server in the order specified in the config. On
 // connection failure, try the next server. A failed server will be tried with
-// some probability according to its fail count, so we can discover recovered
-// servers.
+// some probability according to its fail count, so we can discover recovered servers.
 func createServerConn(rawaddr []byte, addr string) (remote *ss.Conn, err error) {
 	const baseFailCnt = 20
 	n := len(servers.srvCipher)

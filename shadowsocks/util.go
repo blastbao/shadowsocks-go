@@ -8,10 +8,12 @@ import (
 	"os"
 )
 
+
 func PrintVersion() {
 	const version = "1.2.2"
 	fmt.Println("shadowsocks-go version", version)
 }
+
 
 func IsFileExists(path string) (bool, error) {
 	stat, err := os.Stat(path)
@@ -26,6 +28,7 @@ func IsFileExists(path string) (bool, error) {
 	}
 	return false, err
 }
+
 
 func HmacSha1(key []byte, data []byte) []byte {
 	hmacSha1 := hmac.New(sha1.New, key)

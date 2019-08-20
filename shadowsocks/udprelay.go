@@ -249,10 +249,14 @@ func handleUDPConnection(handle *SecurePacketConn, n int, src net.Addr, receive 
 
 func ReadAndHandleUDPReq(c *SecurePacketConn, addTraffic func(int)) error {
 	buf := leakyBuf.Get()
+
+	// 接受 udp 数据报，获取 client 的地址 src
 	n, src, err := c.ReadFrom(buf[0:])
 	if err != nil {
 		return err
 	}
+
+	//
 	go handleUDPConnection(c, n, src, buf, addTraffic)
 	return nil
 }

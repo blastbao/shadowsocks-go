@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	AddrMask        byte = 0xf
+	AddrMask byte = 0xf
 )
 
 type Conn struct {
@@ -54,20 +54,28 @@ func RawAddr(addr string) (buf []byte, err error) {
 }
 
 // DialWithRawAddr is intended for use by users implementing a local socks proxy.
-// rawaddr shoud contain part of the data in socks request, starting from the
-// ATYP field. (Refer to rfc1928 for more information.)
+// rawaddr shoud contain part of the data in socks request, starting from the ATYP field.
+// (Refer to rfc1928 for more information.)
 func DialWithRawAddr(rawaddr []byte, server string, cipher *Cipher) (c *Conn, err error) {
+
+	// 与 server 创建 tcp 连接
 	conn, err := net.Dial("tcp", server)
 	if err != nil {
 		return
 	}
+
+	// 进行 ss 封装
 	c = NewConn(conn, cipher)
+
+	// 写入真实期望的服务地址 rawaddr
 	if _, err = c.Write(rawaddr); err != nil {
 		c.Close()
 		return nil, err
 	}
 	return
 }
+
+
 
 // Dial: addr should be in the form of host:port
 func Dial(addr, server string, cipher *Cipher) (c *Conn, err error) {
@@ -77,6 +85,9 @@ func Dial(addr, server string, cipher *Cipher) (c *Conn, err error) {
 	}
 	return DialWithRawAddr(ra, server, cipher)
 }
+
+
+
 
 func (c *Conn) Read(b []byte) (n int, err error) {
 	if c.dec == nil {
@@ -102,6 +113,8 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 	}
 	return
 }
+
+
 
 func (c *Conn) Write(b []byte) (n int, err error) {
 	var iv []byte
