@@ -40,15 +40,18 @@ func init() {
 	rand.Seed(time.Now().Unix())
 }
 
+// SOCKS5 协议介绍: https://github.com/gwuhaolin/blog/issues/12
 func handShake(conn net.Conn) (err error) {
+
 	const (
 		idVer     = 0
 		idNmethod = 1
 	)
-	// version identification and method selection message in theory can have
-	// at most 256 methods, plus version and nmethod field in total 258 bytes
-	// the current rfc defines only 3 authentication methods (plus 2 reserved),
-	// so it won't be such long in practice
+
+	//version identification and method selection message in theory can have
+	//at most 256 methods, plus version and nmethod field in total 258 bytes
+	//the current rfc defines only 3 authentication methods (plus 2 reserved),
+	//so it won't be such long in practice
 
 	buf := make([]byte, 258)
 
@@ -58,6 +61,9 @@ func handShake(conn net.Conn) (err error) {
 	if n, err = io.ReadAtLeast(conn, buf, idNmethod+1); err != nil {
 		return
 	}
+
+
+	// 接受客户端的连接请求: VER(1B) / NMETHODS(1B) / METHODS(1B)
 	if buf[idVer] != socksVer5 {
 		return errVer
 	}
@@ -72,12 +78,21 @@ func handShake(conn net.Conn) (err error) {
 	} else { // error, should not get extra data
 		return errAuthExtraData
 	}
+
+
+	// 回复客户端的连接请求: VER(1B) / NMETHODS(1B)
+
 	// send confirmation: version 5, no authentication required
 	_, err = conn.Write([]byte{socksVer5, 0})
 	return
 }
 
+
+
+// 接受来自浏览器的 SOCKS5 请求
 func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
+
+
 	const (
 		idVer   = 0
 		idCmd   = 1
@@ -94,6 +109,9 @@ func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
 		lenIPv6   = 3 + 1 + net.IPv6len + 2 // 3(ver+cmd+rsv) + 1addrType + ipv6 + 2port
 		lenDmBase = 3 + 1 + 1 + 2           // 3 + 1addrType + 1addrLen + 2port, plus addrLen
 	)
+
+
+
 	// refer to getRequest in server.go for why set buffer size to 263
 	buf := make([]byte, 263)
 	var n int
@@ -102,16 +120,25 @@ func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
 	if n, err = io.ReadAtLeast(conn, buf, idDmLen+1); err != nil {
 		return
 	}
-	// check version and cmd
+
+
+
+	// Version
 	if buf[idVer] != socksVer5 {
 		err = errVer
 		return
 	}
+
+	// CMD
 	if buf[idCmd] != socksCmdConnect {
 		err = errCmd
 		return
 	}
 
+	// RSV
+	// ...
+
+	// ATYP
 	reqLen := -1
 	switch buf[idType] {
 	case typeIPv4:
@@ -136,8 +163,8 @@ func getRequest(conn net.Conn) (rawaddr []byte, host string, err error) {
 		return
 	}
 
+	// DST.ADDR:DST.PORT
 	rawaddr = buf[idType:reqLen]
-
 	if debug {
 		switch buf[idType] {
 		case typeIPv4:
@@ -166,7 +193,6 @@ var servers struct {
 }
 
 func parseServerConfig(config *ss.Config) {
-
 
 	// 检查字符串 s 中是否包含 port
 	hasPort := func(s string) bool {
@@ -322,16 +348,20 @@ func handleConnection(conn net.Conn) {
 		}
 	}()
 
+	// 建立 SOCKS5 连接（握手）
 	var err error = nil
 	if err = handShake(conn); err != nil {
 		log.Println("socks handshake:", err)
 		return
 	}
+
+	// 接收来自浏览器的 SOCKS5 代理请求
 	rawaddr, addr, err := getRequest(conn)
 	if err != nil {
 		log.Println("error getting request:", err)
 		return
 	}
+
 	// Sending connection established message immediately to client.
 	// This some round trip time for creating socks connection with the client.
 	// But if connection failed, the client will get connection reset error.
@@ -348,6 +378,7 @@ func handleConnection(conn net.Conn) {
 		}
 		return
 	}
+
 	defer func() {
 		if !closed {
 			remote.Close()
@@ -358,62 +389,94 @@ func handleConnection(conn net.Conn) {
 	ss.PipeThenClose(remote, conn, nil)
 	closed = true
 	debug.Println("closed connection to", addr)
+
+
 }
 
+
 func run(listenAddr string) {
+
+	// 监听本地 tcp 端口
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("starting local socks5 server at %v ...\n", listenAddr)
+
 	for {
+		// 建立连接
 		conn, err := ln.Accept()
 		if err != nil {
 			log.Println("accept:", err)
 			continue
 		}
+		// 处理连接
 		go handleConnection(conn)
 	}
 }
 
 func enoughOptions(config *ss.Config) bool {
-	return config.Server != nil && config.ServerPort != 0 &&
-		config.LocalPort != 0 && config.Password != ""
+	return config.Server != nil && config.ServerPort != 0 && config.LocalPort != 0 && config.Password != ""
 }
 
 func parseURI(u string, cfg *ss.Config) (string, error) {
+
 	if u == "" {
 		return "", nil
 	}
+
 	invalidURI := errors.New("invalid URI")
+
 	// ss://base64(method:password)@host:port
 	// ss://base64(method:password@host:port)
-	u = strings.TrimLeft(u, "ss://")
+	u  = strings.TrimLeft(u, "ss://")
 	i := strings.IndexRune(u, '@')
+
 	var headParts, tailParts [][]byte
+
+
+	// 不包含 @ 字符
 	if i == -1 {
+
+		// base64 解码
 		dat, err := base64.StdEncoding.DecodeString(u)
 		if err != nil {
 			return "", err
 		}
+
+		// 按 @ 切割
 		parts := bytes.Split(dat, []byte("@"))
+
+		// 若仍旧不含 @，则报错
 		if len(parts) != 2 {
 			return "", invalidURI
 		}
+
+		// headParts = {"method", "password"}
 		headParts = bytes.SplitN(parts[0], []byte(":"), 2)
+		// tailParts = {"host", "port"}
 		tailParts = bytes.SplitN(parts[1], []byte(":"), 2)
 
 	} else {
+
 		if i+1 >= len(u) {
 			return "", invalidURI
 		}
+
+		// tailParts = {"host", "port"}
 		tailParts = bytes.SplitN([]byte(u[i+1:]), []byte(":"), 2)
+
+		// base64 解码
 		dat, err := base64.StdEncoding.DecodeString(u[:i])
 		if err != nil {
 			return "", err
 		}
+
+		// headParts = {"method", "password"}
 		headParts = bytes.SplitN(dat, []byte(":"), 2)
 	}
+
+
 	if len(headParts) != 2 {
 		return "", invalidURI
 	}
@@ -421,16 +484,20 @@ func parseURI(u string, cfg *ss.Config) (string, error) {
 	if len(tailParts) != 2 {
 		return "", invalidURI
 	}
-	cfg.Method = string(headParts[0])
-	cfg.Password = string(headParts[1])
-	p, e := strconv.Atoi(string(tailParts[1]))
+
+	// 把解析 u 得到的参数填入 cfg 结构体中
+	cfg.Method = string(headParts[0])   		// "method"
+	cfg.Password = string(headParts[1]) 		// "password"
+	p, e := strconv.Atoi(string(tailParts[1]))	// "port"
 	if e != nil {
 		return "", e
 	}
 	cfg.ServerPort = p
-	return string(tailParts[0]), nil
-
+	return string(tailParts[0]), nil        	// "host"
 }
+
+
+
 
 func main() {
 	log.SetOutput(os.Stdout)
@@ -450,9 +517,9 @@ func main() {
 	flag.StringVar(&cmdConfig.Method, "m", "", "encryption method, default: aes-256-cfb")
 	flag.BoolVar((*bool)(&debug), "d", false, "print debug message")
 	flag.StringVar(&cmdURI, "u", "", "shadowsocks URI")
-
 	flag.Parse()
 
+	// 解析 cmdURI 并把解析后参数填充到 cmdConfig 中
 	if s, e := parseURI(cmdURI, &cmdConfig); e != nil {
 		log.Printf("invalid URI: %s\n", e.Error())
 		flag.Usage()
@@ -461,6 +528,7 @@ func main() {
 		cmdServer = s
 	}
 
+	//
 	if printVer {
 		ss.PrintVersion()
 		os.Exit(0)
@@ -479,6 +547,8 @@ func main() {
 		log.Printf("%s not found, try config file %s\n", oldConfig, configFile)
 	}
 
+
+	// 解析配置文件
 	config, err := ss.ParseConfig(configFile)
 	if err != nil {
 		config = &cmdConfig
@@ -489,9 +559,13 @@ func main() {
 	} else {
 		ss.UpdateConfig(config, &cmdConfig)
 	}
+
+	// 设置加密方式
 	if config.Method == "" {
 		config.Method = "aes-256-cfb"
 	}
+
+	// 参数校验: 检查是否有配置缺失
 	if len(config.ServerPassword) == 0 {
 		if !enoughOptions(config) {
 			fmt.Fprintln(os.Stderr, "must specify server address, password and both server/local port")
@@ -507,6 +581,9 @@ func main() {
 		}
 	}
 
+	// 解析 config 对象，来初始化全局 servers 对象。
 	parseServerConfig(config)
+
+	//
 	run(config.LocalAddress + ":" + strconv.Itoa(config.LocalPort))
 }
